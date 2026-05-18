@@ -1,6 +1,7 @@
 import factory
 
 from apps.accounts.models import User
+from apps.ingestion.models import BuildEvent, BuildStatus, WebhookDelivery, WebhookProvider
 from apps.organizations.models import Organization, OrganizationMembership, Project, Role
 
 
@@ -40,3 +41,24 @@ class OrganizationMembershipFactory(factory.django.DjangoModelFactory):
     user = factory.SubFactory(UserFactory)
     organization = factory.SubFactory(OrganizationFactory)
     role = Role.MEMBER
+
+
+class WebhookDeliveryFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = WebhookDelivery
+
+    project = factory.SubFactory(ProjectFactory)
+    provider = WebhookProvider.GITHUB
+    delivery_id = factory.Sequence(lambda n: f"delivery-{n}")
+
+
+class BuildEventFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = BuildEvent
+
+    project = factory.SubFactory(ProjectFactory)
+    status = BuildStatus.SUCCESS
+    branch = "main"
+    commit_sha = factory.Sequence(lambda n: f"{n:040x}"[:40])
+    duration = 60
+    raw_payload = factory.LazyFunction(dict)
