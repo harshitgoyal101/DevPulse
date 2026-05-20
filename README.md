@@ -58,6 +58,8 @@ DevPulse/
     │   ├── accounts/       # Custom User, Me API, JWT consumer
     │   ├── organizations/  # Org, Project, Membership, serializers, views, RBAC
     │   └── ingestion/      # WebhookDelivery, BuildEvent (webhook dedup + build rows)
+    ├── data/
+    │   └── demo_seed.json  # Demo tenants (users, orgs, projects, ingestion samples)
     └── tests/               # pytest suite (auth, permissions, org APIs, ingestion models)
 ```
 
@@ -117,7 +119,19 @@ python manage.py migrate
 
 You should see migrations for Django apps, `**accounts**` (custom user), `**organizations**`, `**ingestion**`, and `**token_blacklist**` (required for refresh rotation).
 
-### 5. Create an admin user (optional)
+### 5. Load demo data (optional)
+
+A JSON seed file defines sample users, orgs, projects, memberships, webhook deliveries, and build events:
+
+```bash
+python manage.py load_demo_seed
+```
+
+Source: [`backend/data/demo_seed.json`](backend/data/demo_seed.json). All demo users share password `demo-password123` (see `default_password` in the file). The seed includes **4 organizations** with **10 projects** each, **20 users**, cross-org memberships, **16 webhook deliveries**, and **40 build events**. Example login: `alice@acme.dev` (admin on Acme Corp, viewer on Beta Labs).
+
+Re-run safely; existing rows are updated by stable UUID. Use `--reset-passwords` after changing `default_password` in the JSON.
+
+### 6. Create an admin user (optional)
 
 ```bash
 python manage.py createsuperuser
@@ -125,7 +139,7 @@ python manage.py createsuperuser
 
 Enter **email** and password when prompted (there is no `username` field).
 
-### 6. Run the API
+### 7. Run the API
 
 ```bash
 python manage.py runserver
