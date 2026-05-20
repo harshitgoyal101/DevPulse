@@ -2,7 +2,7 @@
 
 DevPulse is a **self-hosted CI/CD observability and alerting platform** (see Product Requirements Document `devpulse_prd.pdf`). It aims to ingest build events via webhooks and CI polling, process them asynchronously, stream live updates over WebSockets, and deliver alerts across Email, Slack, and in-app channels—with analytics such as flaky test detection and MTTR.
 
-This repository currently implements **Phase 1 — Foundation / Milestone 1** (in progress): a Django REST API on **PostgreSQL**, **JWT authentication** with refresh rotation, **multi-tenant RBAC** (organizations, projects, memberships), **org-scoped REST APIs**, and **ingestion data models** (`WebhookDelivery`, `BuildEvent`) for webhook dedup and parsed builds. The webhook HTTP endpoint, Celery workers, Channels, Redis, and the React dashboard are **not** wired up yet; they are planned in later milestones.
+This repository currently implements **Phase 1 — Foundation / Milestone 1** (in progress): a Django REST API on **PostgreSQL**, **JWT authentication** with refresh rotation, **multi-tenant RBAC** (organizations, projects, memberships), **org-scoped REST APIs**, **ingestion data models** (`WebhookDelivery`, `BuildEvent`), and a **React (Vite) frontend** with basic login/logout. The webhook HTTP endpoint, Celery workers, Channels, Redis, and live build dashboards are **not** wired up yet; they are planned in later milestones.
 
 ---
 
@@ -21,6 +21,7 @@ This repository currently implements **Phase 1 — Foundation / Milestone 1** (i
 | Auth API: login, refresh, `/me`                                                            | Yes                          |
 | Org/project/membership REST APIs (`/api/orgs/…`) with RBAC                                 | Yes                          |
 | Permission helpers (`IsOrganizationMember`, `HasOrganizationRole`, org-scoped mixins)      | Yes (enforced on org routes) |
+| React frontend (Vite): login, logout, `/me` dashboard shell                                | Yes                          |
 | Webhook HTTP endpoint (HMAC, enqueue) / Celery / Redis / Channels                          | No                           |
 
 
@@ -61,6 +62,7 @@ DevPulse/
     ├── data/
     │   └── demo_seed.json  # Demo tenants (users, orgs, projects, ingestion samples)
     └── tests/               # pytest suite (auth, permissions, org APIs, ingestion models)
+└── frontend/                # React 18 + Vite (login, logout, protected home)
 ```
 
 Tests and packaging assume you run commands from `**backend/**` unless noted otherwise.
@@ -148,6 +150,20 @@ python manage.py runserver
 - API base: **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)**
 - Admin: **[http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)**
 
+### 8. Run the frontend (optional)
+
+From the repo root (Node 18+):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open **[http://localhost:5173](http://localhost:5173)**. Vite proxies `/api` to Django (`frontend/vite.config.ts`). CORS allows `http://localhost:5173` in local settings.
+
+Sign in with a demo user (after `load_demo_seed`), e.g. `alice@acme.dev` / `demo-password123`. Log out blacklists the refresh token via `POST /api/auth/token/blacklist/`.
+
 ---
 
 ## Environment variables
@@ -195,7 +211,18 @@ Content-Type: application/json
 {"refresh": "<refresh-token>"}
 ```
 
-Returns a **new** access token and **new** refresh token; the previous refresh token is blacklisted so it cannot be reused.
+Returns a **new** access token and **new** refresh token when `ROTATE_REFRESH_TOKENS` is enabled.
+
+### Log out (blacklist refresh)
+
+```http
+POST /api/auth/token/blacklist/
+Content-Type: application/json
+
+{"refresh": "<refresh-token>"}
+```
+
+Returns **205**. The refresh token cannot be used again. The React app calls this on logout.
 
 ### Current user
 

@@ -42,13 +42,33 @@ class TestAuthAPI:
         new_refresh = refreshed.data["refresh"]
         assert new_refresh != refresh
 
-        old = client.post(
+        access = refreshed.data["access"]
+        me = client.get(reverse("auth_me"), HTTP_AUTHORIZATION=f"Bearer {access}")
+        assert me.status_code == status.HTTP_200_OK
+
+    def test_token_blacklist_logout(self):
+        UserFactory(email="out@example.com", password="secret123")
+        client = APIClient()
+        obtain = client.post(
+            reverse("token_obtain_pair"),
+            {"email": "out@example.com", "password": "secret123"},
+            format="json",
+        )
+        refresh = obtain.data["refresh"]
+
+        blacklist = client.post(
+            reverse("token_blacklist"),
+            {"refresh": refresh},
+            format="json",
+        )
+        assert blacklist.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_205_RESET_CONTENT,
+        )
+
+        again = client.post(
             reverse("token_refresh"),
             {"refresh": refresh},
             format="json",
         )
-        assert old.status_code == status.HTTP_401_UNAUTHORIZED
-
-        access = refreshed.data["access"]
-        me = client.get(reverse("auth_me"), HTTP_AUTHORIZATION=f"Bearer {access}")
-        assert me.status_code == status.HTTP_200_OK
+        assert again.status_code == status.HTTP_401_UNAUTHORIZED
