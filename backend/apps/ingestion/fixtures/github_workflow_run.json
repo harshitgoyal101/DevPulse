@@ -1,0 +1,11 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "head_branch": "main",
+    "head_sha": "1111111111111111111111111111111111111111",
+    "status": "completed",
+    "conclusion": "success",
+    "run_started_at": "2026-05-01T10:00:00Z",
+    "updated_at": "2026-05-01T10:02:00Z"
+  }
+}

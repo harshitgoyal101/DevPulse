@@ -11,6 +11,7 @@ from .serializers import (
     OrganizationCreateSerializer,
     OrganizationDetailSerializer,
     OrganizationSerializer,
+    ProjectDetailSerializer,
     ProjectSerializer,
 )
 
@@ -68,8 +69,12 @@ class ProjectDetailView(
 ):
     permission_classes = (HasOrganizationRole,)
     queryset = Project.objects.all()
-    serializer_class = ProjectSerializer
     lookup_url_kwarg = "project_id"
+
+    def get_serializer_class(self):
+        if self.request.method == "GET":
+            return ProjectDetailSerializer
+        return ProjectSerializer
 
     def get_serializer_context(self):
         context = super().get_serializer_context()

@@ -15,4 +15,5 @@ urlpatterns = [
     path("api/auth/token/blacklist/", TokenBlacklistView.as_view(), name="token_blacklist"),
     path("api/auth/me/", MeView.as_view(), name="auth_me"),
     path("api/orgs/", include("apps.organizations.urls")),
+    path("api/webhooks/", include("apps.ingestion.urls")),
 ]

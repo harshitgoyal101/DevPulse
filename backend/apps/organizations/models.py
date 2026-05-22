@@ -1,9 +1,14 @@
 """Organizations, projects, and membership roles (RBAC data model)."""
 
+import secrets
 import uuid
 
 from django.conf import settings
 from django.db import models
+
+
+def generate_webhook_secret() -> str:
+    return secrets.token_urlsafe(32)
 
 
 class Role(models.TextChoices):
@@ -54,6 +59,11 @@ class Project(models.Model):
     )
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255)
+    webhook_secret = models.CharField(
+        max_length=64,
+        default=generate_webhook_secret,
+        help_text="Shared secret for webhook HMAC verification (GitHub) or token (GitLab).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -68,6 +78,11 @@ class Project(models.Model):
 
     def __str__(self) -> str:
         return f"{self.organization.slug}/{self.slug}"
+
+    def rotate_webhook_secret(self) -> str:
+        self.webhook_secret = generate_webhook_secret()
+        self.save(update_fields=["webhook_secret", "updated_at"])
+        return self.webhook_secret
 
 
 class OrganizationMembership(models.Model):

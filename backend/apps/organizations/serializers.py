@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.accounts.models import User
 
 from .models import Organization, OrganizationMembership, Project, Role
+from .permissions import get_user_role
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -60,6 +61,26 @@ class ProjectSerializer(serializers.ModelSerializer):
                     {"slug": "A project with this slug already exists in the organization."}
                 )
         return attrs
+
+
+class ProjectDetailSerializer(ProjectSerializer):
+    """Project detail; webhook_secret visible only to org admins."""
+
+    webhook_secret = serializers.CharField(read_only=True)
+
+    class Meta(ProjectSerializer.Meta):
+        fields = ProjectSerializer.Meta.fields + ("webhook_secret",)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request is None or not request.user.is_authenticated:
+            data.pop("webhook_secret", None)
+            return data
+        role = get_user_role(request.user, instance.organization_id)
+        if role != Role.ADMIN:
+            data.pop("webhook_secret", None)
+        return data
 
 
 class OrganizationDetailSerializer(OrganizationSerializer):

@@ -6,6 +6,7 @@ from .models import BuildEvent, WebhookDelivery
 @admin.register(WebhookDelivery)
 class WebhookDeliveryAdmin(admin.ModelAdmin):
     list_display = ("provider", "delivery_id", "project", "received_at")
+    list_display = ("provider", "delivery_id", "project", "received_at")
     list_filter = ("provider",)
     search_fields = ("delivery_id", "project__name", "project__slug")
     autocomplete_fields = ("project",)

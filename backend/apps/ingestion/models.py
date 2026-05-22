@@ -35,6 +35,7 @@ class WebhookDelivery(models.Model):
     )
     provider = models.CharField(max_length=32, choices=WebhookProvider.choices)
     delivery_id = models.CharField(max_length=255)
+    raw_payload = models.JSONField(default=dict)
     received_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -54,6 +55,13 @@ class BuildEvent(models.Model):
     """Normalized build/run record parsed from a webhook payload."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    webhook_delivery = models.ForeignKey(
+        WebhookDelivery,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="build_events",
+    )
     project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,

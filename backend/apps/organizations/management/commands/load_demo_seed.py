@@ -87,12 +87,17 @@ class Command(BaseCommand):
             self.stdout.write(f"  {action} org {org.slug}")
 
             for proj_row in org_row.get("projects", []):
+                webhook_secret = proj_row.get(
+                    "webhook_secret",
+                    f"demo-{org.slug}-{proj_row['slug']}-webhook-secret",
+                )
                 project, proj_created = Project.objects.update_or_create(
                     id=uuid.UUID(proj_row["id"]),
                     defaults={
                         "organization": org,
                         "name": proj_row["name"],
                         "slug": proj_row["slug"],
+                        "webhook_secret": webhook_secret,
                     },
                 )
                 ref = (org.slug, project.slug)
@@ -136,6 +141,7 @@ class Command(BaseCommand):
                     "project": project,
                     "provider": row["provider"],
                     "delivery_id": row["delivery_id"],
+                    "raw_payload": row.get("raw_payload", {}),
                 },
             )
             action = "Created" if created else "Updated"
