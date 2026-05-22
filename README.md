@@ -2,7 +2,7 @@
 
 DevPulse is a **self-hosted CI/CD observability and alerting platform** (see Product Requirements Document `devpulse_prd.pdf`). It aims to ingest build events via webhooks and CI polling, process them asynchronously, stream live updates over WebSockets, and deliver alerts across Email, Slack, and in-app channels—with analytics such as flaky test detection and MTTR.
 
-This repository currently implements **Phase 1 — Foundation / Milestone 1** (in progress): a Django REST API on **PostgreSQL**, **JWT authentication** with refresh rotation, **multi-tenant RBAC** (organizations, projects, memberships), **org-scoped REST APIs**, **ingestion data models** (`WebhookDelivery`, `BuildEvent`), and a **React (Vite) frontend** with basic login/logout. The webhook HTTP endpoint, Celery workers, Channels, Redis, and live build dashboards are **not** wired up yet; they are planned in later milestones.
+This repository implements **Phase 1 — Foundation**: a Django REST API on **PostgreSQL** and **Redis**, **JWT authentication** with refresh rotation, **multi-tenant RBAC**, **org-scoped REST APIs**, **webhook ingestion** (HMAC verification, deduplication, async Celery processing into `BuildEvent`), and a **React (Vite) frontend** with login and an org/project dashboard shell. **Phase 2** (Channels, live WebSocket timeline, CI polling) is not started yet.
 
 ---
 
@@ -21,8 +21,12 @@ This repository currently implements **Phase 1 — Foundation / Milestone 1** (i
 | Auth API: login, refresh, `/me`                                                            | Yes                          |
 | Org/project/membership REST APIs (`/api/orgs/…`) with RBAC                                 | Yes                          |
 | Permission helpers (`IsOrganizationMember`, `HasOrganizationRole`, org-scoped mixins)      | Yes (enforced on org routes) |
-| React frontend (Vite): login, logout, `/me` dashboard shell                                | Yes                          |
-| Webhook HTTP endpoint (HMAC, enqueue) / Celery / Redis / Channels                          | No                           |
+| React frontend (Vite): login, logout, org/project dashboard shell                            | Yes                          |
+| Per-project `webhook_secret` (admins see on project detail API)                            | Yes                          |
+| Webhook HTTP endpoint: HMAC/token verify, dedup, 202 + Celery enqueue                      | Yes                          |
+| Celery worker + Redis broker (local or Docker Compose)                                       | Yes                          |
+| Docker Compose: Postgres, Redis, API, Celery worker                                        | Yes                          |
+| Django Channels / live WebSocket dashboards                                                | No (Phase 2)                 |
 
 
 ---
@@ -35,6 +39,7 @@ This repository currently implements **Phase 1 — Foundation / Milestone 1** (i
 | Runtime        | Python 3.12+                                                |
 | Framework      | Django 5, Django REST Framework                             |
 | Authentication | JWT (SimpleJWT), token blacklist for rotated refresh tokens |
+| Task queue     | Celery 5 + Redis 7                                          |
 | Database       | PostgreSQL 16                                               |
 | Driver         | psycopg 3                                                   |
 | CORS           | `django-cors-headers` (default allows Vite dev origin)      |
@@ -48,7 +53,7 @@ This repository currently implements **Phase 1 — Foundation / Milestone 1** (i
 ```
 DevPulse/
 ├── devpulse_prd.pdf          # Product requirements
-├── docker-compose.yml        # PostgreSQL 16 only (local dev)
+├── docker-compose.yml        # Postgres, Redis, API, Celery worker
 ├── .env.example              # Sample environment variables
 ├── README.md                 # This file
 └── backend/
@@ -79,15 +84,23 @@ Tests and packaging assume you run commands from `**backend/**` unless noted oth
 
 ## Quick start (local development)
 
-### 1. Start PostgreSQL
+### 1. Start infrastructure (Postgres + Redis)
 
 From the repository root:
 
 ```bash
-docker compose up -d
+docker compose up -d postgres redis
 ```
 
-This starts Postgres 16 with database `devpulse`, user `devpulse`, password `devpulse`, on port **5432**.
+Or start the **full Phase 1 stack** (Postgres, Redis, Django API, Celery worker):
+
+```bash
+docker compose up -d
+docker compose exec api python manage.py migrate
+docker compose exec api python manage.py load_demo_seed
+```
+
+Postgres listens on **5432**; Redis on **6379**; API on **8000**.
 
 ### 2. Configure environment variables
 
@@ -176,6 +189,9 @@ Sign in with a demo user (after `load_demo_seed`), e.g. `alice@acme.dev` / `demo
 | `DATABASE_URL`         | Yes (unless test settings)  | PostgreSQL URL, e.g. `postgres://USER:PASSWORD@HOST:5432/devpulse` |
 | `ALLOWED_HOSTS`        | Optional                    | Comma-separated hosts; defaults to `localhost,127.0.0.1`           |
 | `CORS_ALLOWED_ORIGINS` | Optional                    | Comma-separated origins (e.g. `http://localhost:5173` for Vite)    |
+| `REDIS_URL`            | Optional                    | Default `redis://localhost:6379/0`                                 |
+| `CELERY_BROKER_URL`    | Optional                    | Defaults to `REDIS_URL`                                          |
+| `WEBHOOK_BASE_URL`     | Optional                    | Base URL for webhook docs/simulator (default `http://127.0.0.1:8000`) |
 
 
 **Tests** use `config.settings.test` (SQLite in-memory, fast password hasher). When `DJANGO_SETTINGS_MODULE` ends with `.test`, `DATABASE_URL` and `DJANGO_SECRET_KEY` are not required—see `backend/config/settings/base.py` and `backend/config/settings/test.py`.
@@ -236,6 +252,40 @@ Authorization: Bearer <access-token>
 Unauthenticated requests return **401**.
 
 There is **no public registration endpoint** yet; create users via `createsuperuser` or the admin.
+
+---
+
+## Webhook ingestion API
+
+Public endpoint (no JWT). Project is identified in the URL; signature uses the project’s `webhook_secret` (visible to org **admins** on `GET /api/orgs/{org_id}/projects/{project_id}/`).
+
+```http
+POST /api/webhooks/{provider}/{project_id}/
+```
+
+`provider` is `github` or `gitlab`.
+
+| Provider | Verification header | Delivery ID header |
+| -------- | ------------------- | ------------------ |
+| GitHub   | `X-Hub-Signature-256` (`sha256=` HMAC-SHA256 of raw body) | `X-GitHub-Delivery` |
+| GitLab   | `X-Gitlab-Token` (constant-time compare to secret) | `X-Gitlab-Event-UUID` |
+
+**Responses**
+
+- **202** — accepted (new delivery enqueued, or duplicate delivery ID already recorded)
+- **401** — invalid signature/token
+- **404** — unknown provider or project
+
+Supported payload shapes (MVP): GitHub `workflow_run` (completed/in progress), GitLab `pipeline` `object_attributes`. The Celery worker writes a `BuildEvent` linked to the `WebhookDelivery`.
+
+**Simulate locally** (after `load_demo_seed`):
+
+```bash
+cd backend
+python manage.py simulate_webhook --org-slug acme-corp --project-slug web-api
+```
+
+Uses fixture [`backend/apps/ingestion/fixtures/github_workflow_run.json`](backend/apps/ingestion/fixtures/github_workflow_run.json). Demo projects use predictable secrets: `demo-{org_slug}-{project_slug}-webhook-secret`.
 
 ---
 
@@ -392,17 +442,15 @@ ruff check apps config manage.py tests
 
 ---
 
-## Roadmap (from PRD, not implemented here)
+## Roadmap (Phase 2+, from PRD)
 
-Planned items for later milestones include:
-
-- Webhook HTTP endpoint (HMAC verification, enqueue) and Celery worker to populate `BuildEvent` from `WebhookDelivery` (models and dedup constraint are in place)
-- Full `docker-compose` (API, Celery worker, Beat, Channels, Redis)
-- Real-time dashboards (Channels + Redis + React)
-- Notifications, analytics, Prometheus, OpenAPI docs, seed scripts
+- Django Channels + Redis pub/sub + live build timeline (WebSocket)
+- CI API polling via Celery Beat
+- Build list REST API for dashboard
+- Notifications (Email, Slack, in-app), analytics, Prometheus, OpenAPI docs
 
 ---
 
 ## License / status
 
-Requirements and roadmap are captured in `**devpulse_prd.pdf**`. Backend code follows the scaffold described in Milestone 1 of the Phase 1 plan; production hardening beyond this milestone is intentional future work.
+Requirements and roadmap are captured in `**devpulse_prd.pdf**`. Phase 1 (webhooks, Celery, Redis, docker-compose) is implemented; Phase 2+ is intentional future work.
