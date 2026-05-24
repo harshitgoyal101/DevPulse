@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
+import * as buildsApi from "../api/builds";
 import * as orgApi from "../api/organizations";
+import { AddMemberForm } from "../components/AddMemberForm";
+import { CreateOrganizationForm } from "../components/CreateOrganizationForm";
+import { CreateProjectForm } from "../components/CreateProjectForm";
+import { MembersTable } from "../components/MembersTable";
+import { ProjectDetailPanel } from "../components/ProjectDetailPanel";
 import { ProjectsTable } from "../components/ProjectsTable";
 import { authErrorMessage, useAuth } from "../context/AuthContext";
-import type { Organization, OrganizationDetail } from "../types/organizations";
+import { useOrgMembership } from "../hooks/useOrgMembership";
+import { formatRole, hasMinimumRole } from "../lib/roles";
+import type { BuildEvent } from "../types/builds";
+import type {
+  Membership,
+  Organization,
+  OrganizationDetail,
+  ProjectDetail,
+  Role,
+} from "../types/organizations";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -27,9 +42,25 @@ export function HomePage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [orgDetail, setOrgDetail] = useState<OrganizationDetail | null>(null);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
+  const [builds, setBuilds] = useState<BuildEvent[]>([]);
   const [loadingOrgs, setLoadingOrgs] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCreateOrg, setShowCreateOrg] = useState(false);
+  const [showCreateProject, setShowCreateProject] = useState(false);
+  const [showAddMember, setShowAddMember] = useState(false);
+
+  const { role, loading: loadingRole, refetch: refetchMembership } = useOrgMembership(
+    accessToken,
+    selectedOrgId,
+    user?.email,
+  );
+  const isAdmin = hasMinimumRole(role, "admin");
 
   const loadOrganizations = useCallback(async () => {
     if (!accessToken) return;
@@ -51,39 +82,131 @@ export function HomePage() {
     }
   }, [accessToken]);
 
-  useEffect(() => {
-    loadOrganizations();
-  }, [loadOrganizations]);
-
-  useEffect(() => {
+  const loadOrgDetail = useCallback(async () => {
     if (!accessToken || !selectedOrgId) {
       setOrgDetail(null);
       return;
     }
-
-    let cancelled = false;
     setLoadingDetail(true);
-    setError(null);
-
-    orgApi
-      .getOrganization(accessToken, selectedOrgId)
-      .then((detail) => {
-        if (!cancelled) setOrgDetail(detail);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(authErrorMessage(err));
-          setOrgDetail(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingDetail(false);
+    try {
+      const detail = await orgApi.getOrganization(accessToken, selectedOrgId);
+      setOrgDetail(detail);
+      setSelectedProjectId((current) => {
+        if (current && detail.projects.some((p) => p.id === current)) return current;
+        return null;
       });
-
-    return () => {
-      cancelled = true;
-    };
+    } catch (err) {
+      setError(authErrorMessage(err));
+      setOrgDetail(null);
+    } finally {
+      setLoadingDetail(false);
+    }
   }, [accessToken, selectedOrgId]);
+
+  const loadMembers = useCallback(async () => {
+    if (!accessToken || !selectedOrgId) {
+      setMemberships([]);
+      return;
+    }
+    setLoadingMembers(true);
+    try {
+      const list = await orgApi.listMemberships(accessToken, selectedOrgId);
+      setMemberships(list);
+    } catch (err) {
+      setError(authErrorMessage(err));
+      setMemberships([]);
+    } finally {
+      setLoadingMembers(false);
+    }
+  }, [accessToken, selectedOrgId]);
+
+  const loadProjectData = useCallback(
+    async (projectId: string) => {
+      if (!accessToken || !selectedOrgId) return;
+      setLoadingProject(true);
+      try {
+        const [detail, buildList] = await Promise.all([
+          orgApi.getProject(accessToken, selectedOrgId, projectId),
+          buildsApi.listBuildEvents(accessToken, selectedOrgId, projectId),
+        ]);
+        setProjectDetail(detail);
+        setBuilds(buildList);
+      } catch (err) {
+        setError(authErrorMessage(err));
+        setProjectDetail(null);
+        setBuilds([]);
+      } finally {
+        setLoadingProject(false);
+      }
+    },
+    [accessToken, selectedOrgId],
+  );
+
+  useEffect(() => {
+    void loadOrganizations();
+  }, [loadOrganizations]);
+
+  useEffect(() => {
+    void loadOrgDetail();
+  }, [loadOrgDetail]);
+
+  useEffect(() => {
+    void loadMembers();
+  }, [loadMembers]);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      void loadProjectData(selectedProjectId);
+    } else {
+      setProjectDetail(null);
+      setBuilds([]);
+    }
+  }, [selectedProjectId, loadProjectData]);
+
+  const handleCreateOrg = async (payload: { name: string; slug: string }) => {
+    if (!accessToken) return;
+    const org = await orgApi.createOrganization(accessToken, payload);
+    setShowCreateOrg(false);
+    await loadOrganizations();
+    setSelectedOrgId(org.id);
+  };
+
+  const handleCreateProject = async (payload: { name: string; slug: string }) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.createProject(accessToken, selectedOrgId, payload);
+    setShowCreateProject(false);
+    await loadOrgDetail();
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.deleteProject(accessToken, selectedOrgId, projectId);
+    if (selectedProjectId === projectId) {
+      setSelectedProjectId(null);
+    }
+    await loadOrgDetail();
+  };
+
+  const handleAddMember = async (payload: { user_id: string; role: Role }) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.createMembership(accessToken, selectedOrgId, payload);
+    setShowAddMember(false);
+    await Promise.all([loadMembers(), refetchMembership()]);
+  };
+
+  const handleUpdateMemberRole = async (membershipId: string, memberRole: Role) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.updateMembership(accessToken, selectedOrgId, membershipId, {
+      role: memberRole,
+    });
+    await Promise.all([loadMembers(), refetchMembership()]);
+  };
+
+  const handleDeleteMember = async (membershipId: string) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.deleteMembership(accessToken, selectedOrgId, membershipId);
+    await Promise.all([loadMembers(), refetchMembership()]);
+  };
 
   const displayName =
     user && [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -148,54 +271,93 @@ export function HomePage() {
                 Tenant details and membership scope
               </p>
             </div>
-            {organizations.length > 1 && (
-              <label className="flex flex-col gap-1 sm:items-end">
-                <span className="text-xs font-medium text-brand-700">
-                  Switch organization
-                </span>
-                <select
-                  className="input-field min-w-[12rem] sm:max-w-xs"
-                  value={selectedOrgId ?? ""}
-                  onChange={(e) => setSelectedOrgId(e.target.value || null)}
-                  disabled={loadingOrgs}
-                >
-                  {organizations.map((org) => (
-                    <option key={org.id} value={org.id}>
-                      {org.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <div className="flex flex-col gap-2 sm:items-end">
+              {organizations.length > 1 && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-brand-700">
+                    Switch organization
+                  </span>
+                  <select
+                    className="input-field min-w-[12rem] sm:max-w-xs"
+                    value={selectedOrgId ?? ""}
+                    onChange={(e) => {
+                      setSelectedOrgId(e.target.value || null);
+                      setSelectedProjectId(null);
+                    }}
+                    disabled={loadingOrgs}
+                  >
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                onClick={() => setShowCreateOrg((v) => !v)}
+              >
+                {showCreateOrg ? "Cancel" : "New organization"}
+              </button>
+            </div>
           </div>
+
+          {showCreateOrg && (
+            <div className="mt-6 rounded-xl border border-violet-100 bg-brand-50/30 p-4">
+              <CreateOrganizationForm
+                onSubmit={handleCreateOrg}
+                onCancel={() => setShowCreateOrg(false)}
+                compact
+              />
+            </div>
+          )}
 
           {loadingOrgs && (
             <p className="mt-6 text-sm text-slate-500">Loading organizations…</p>
           )}
 
-          {!loadingOrgs && organizations.length === 0 && (
-            <p className="mt-6 rounded-xl bg-brand-50 px-4 py-8 text-center text-sm text-slate-600">
-              You are not a member of any organization yet.
-            </p>
+          {!loadingOrgs && organizations.length === 0 && !showCreateOrg && (
+            <div className="mt-6 rounded-xl bg-brand-50 px-4 py-8 text-center">
+              <p className="text-sm text-slate-600">
+                You are not a member of any organization yet.
+              </p>
+              <button
+                type="button"
+                className="btn-primary mt-4 max-w-xs"
+                onClick={() => setShowCreateOrg(true)}
+              >
+                Create your first organization
+              </button>
+            </div>
           )}
 
           {!loadingOrgs && orgDetail && (
-            <dl className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <MetaItem label="Name">{orgDetail.name}</MetaItem>
-              <MetaItem label="Slug">
-                <code className="rounded-md bg-white px-2 py-0.5 font-mono text-xs text-brand-700 ring-1 ring-violet-100">
-                  {orgDetail.slug}
-                </code>
-              </MetaItem>
-              <MetaItem label="Projects">{orgDetail.projects.length}</MetaItem>
-              <MetaItem label="Created">{formatDate(orgDetail.created_at)}</MetaItem>
-              <MetaItem label="Updated">{formatDate(orgDetail.updated_at)}</MetaItem>
-              <MetaItem label="Organization ID">
-                <code className="break-all font-mono text-xs text-slate-600">
-                  {orgDetail.id}
-                </code>
-              </MetaItem>
-            </dl>
+            <>
+              {role && (
+                <p className="mt-4 inline-flex rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-800">
+                  Your role: {formatRole(role)}
+                  {loadingRole && " (updating…)"}
+                </p>
+              )}
+              <dl className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <MetaItem label="Name">{orgDetail.name}</MetaItem>
+                <MetaItem label="Slug">
+                  <code className="rounded-md bg-white px-2 py-0.5 font-mono text-xs text-brand-700 ring-1 ring-violet-100">
+                    {orgDetail.slug}
+                  </code>
+                </MetaItem>
+                <MetaItem label="Projects">{orgDetail.projects.length}</MetaItem>
+                <MetaItem label="Created">{formatDate(orgDetail.created_at)}</MetaItem>
+                <MetaItem label="Updated">{formatDate(orgDetail.updated_at)}</MetaItem>
+                <MetaItem label="Organization ID">
+                  <code className="break-all font-mono text-xs text-slate-600">
+                    {orgDetail.id}
+                  </code>
+                </MetaItem>
+              </dl>
+            </>
           )}
 
           {!loadingOrgs && selectedOrgId && loadingDetail && (
@@ -203,32 +365,114 @@ export function HomePage() {
           )}
         </section>
 
-        <section className="card-surface overflow-hidden p-0">
-          <div className="border-b border-violet-100 bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-4">
-            <h2 className="text-lg font-semibold text-white">Projects</h2>
-            <p className="mt-0.5 text-sm text-violet-100">
-              {orgDetail
-                ? `${orgDetail.projects.length} project${orgDetail.projects.length === 1 ? "" : "s"} in ${orgDetail.name}`
-                : "Build targets within the selected organization"}
-            </p>
-          </div>
-          <div className="p-6">
-            {orgDetail && !loadingDetail ? (
-              <ProjectsTable projects={orgDetail.projects} />
-            ) : (
-              !loadingOrgs &&
-              selectedOrgId &&
-              loadingDetail && (
-                <p className="text-sm text-slate-500">Loading projects…</p>
-              )
-            )}
-            {!loadingOrgs && !selectedOrgId && (
-              <p className="text-center text-sm text-slate-500">
-                Select an organization to view projects.
-              </p>
-            )}
-          </div>
-        </section>
+        {selectedOrgId && (
+          <section className="card-surface overflow-hidden p-0">
+            <div className="flex flex-col gap-3 border-b border-violet-100 bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Members</h2>
+                <p className="mt-0.5 text-sm text-violet-100">
+                  {memberships.length} member{memberships.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="btn-secondary border-white/30 bg-white/10 text-white hover:bg-white/20"
+                  onClick={() => setShowAddMember((v) => !v)}
+                >
+                  {showAddMember ? "Cancel" : "Add member"}
+                </button>
+              )}
+            </div>
+            <div className="p-6">
+              {showAddMember && isAdmin && (
+                <div className="mb-6 rounded-xl border border-violet-100 bg-brand-50/30 p-4">
+                  <AddMemberForm
+                    onSubmit={handleAddMember}
+                    onCancel={() => setShowAddMember(false)}
+                  />
+                </div>
+              )}
+              {loadingMembers ? (
+                <p className="text-sm text-slate-500">Loading members…</p>
+              ) : (
+                <MembersTable
+                  memberships={memberships}
+                  isAdmin={isAdmin}
+                  onUpdateRole={isAdmin ? handleUpdateMemberRole : undefined}
+                  onDelete={isAdmin ? handleDeleteMember : undefined}
+                />
+              )}
+            </div>
+          </section>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="card-surface overflow-hidden p-0">
+            <div className="flex flex-col gap-3 border-b border-violet-100 bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Projects</h2>
+                <p className="mt-0.5 text-sm text-violet-100">
+                  {orgDetail
+                    ? `${orgDetail.projects.length} project${orgDetail.projects.length === 1 ? "" : "s"} in ${orgDetail.name}`
+                    : "Build targets within the selected organization"}
+                </p>
+              </div>
+              {isAdmin && selectedOrgId && (
+                <button
+                  type="button"
+                  className="btn-secondary border-white/30 bg-white/10 text-white hover:bg-white/20"
+                  onClick={() => setShowCreateProject((v) => !v)}
+                >
+                  {showCreateProject ? "Cancel" : "Add project"}
+                </button>
+              )}
+            </div>
+            <div className="p-6">
+              {showCreateProject && isAdmin && (
+                <div className="mb-6 rounded-xl border border-violet-100 bg-brand-50/30 p-4">
+                  <CreateProjectForm
+                    onSubmit={handleCreateProject}
+                    onCancel={() => setShowCreateProject(false)}
+                  />
+                </div>
+              )}
+              {orgDetail && !loadingDetail ? (
+                <ProjectsTable
+                  projects={orgDetail.projects}
+                  selectedProjectId={selectedProjectId}
+                  onSelect={setSelectedProjectId}
+                  isAdmin={isAdmin}
+                  onDelete={isAdmin ? handleDeleteProject : undefined}
+                />
+              ) : (
+                !loadingOrgs &&
+                selectedOrgId &&
+                loadingDetail && (
+                  <p className="text-sm text-slate-500">Loading projects…</p>
+                )
+              )}
+              {!loadingOrgs && !selectedOrgId && (
+                <p className="text-center text-sm text-slate-500">
+                  Select an organization to view projects.
+                </p>
+              )}
+            </div>
+          </section>
+
+          <ProjectDetailPanel
+            project={projectDetail}
+            builds={builds}
+            loading={loadingProject}
+            isAdmin={isAdmin}
+            orgSlug={orgDetail?.slug}
+            onRefresh={
+              selectedProjectId
+                ? () => void loadProjectData(selectedProjectId)
+                : undefined
+            }
+          />
+        </div>
       </main>
     </div>
   );

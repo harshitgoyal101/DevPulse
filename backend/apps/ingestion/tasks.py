@@ -1,7 +1,7 @@
 """Celery tasks for webhook ingestion."""
 
 import logging
-import time
+
 from celery import shared_task
 
 from apps.ingestion.models import BuildEvent, WebhookDelivery
@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def process_webhook_delivery(self, delivery_id: str) -> None:
     try:
-        time.sleep(10)
         delivery = WebhookDelivery.objects.select_related("project").get(pk=delivery_id)
     except WebhookDelivery.DoesNotExist:
         logger.warning("WebhookDelivery %s not found", delivery_id)

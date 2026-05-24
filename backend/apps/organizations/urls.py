@@ -1,5 +1,7 @@
 from django.urls import path
 
+from apps.ingestion.build_views import BuildEventListView
+
 from . import views
 
 urlpatterns = [
@@ -14,6 +16,11 @@ urlpatterns = [
         "<uuid:org_id>/projects/<uuid:project_id>/",
         views.ProjectDetailView.as_view(),
         name="project-detail",
+    ),
+    path(
+        "<uuid:org_id>/projects/<uuid:project_id>/builds/",
+        BuildEventListView.as_view(),
+        name="build-list",
     ),
     path(
         "<uuid:org_id>/memberships/",

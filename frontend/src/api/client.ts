@@ -11,6 +11,41 @@ export class ApiError extends Error {
   }
 }
 
+function formatFieldErrors(body: Record<string, unknown>): string | null {
+  const messages: string[] = [];
+  for (const [field, value] of Object.entries(body)) {
+    if (field === "detail" || field === "non_field_errors") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        messages.push(`${field}: ${String(item)}`);
+      }
+    } else if (typeof value === "string") {
+      messages.push(`${field}: ${value}`);
+    }
+  }
+  if (Array.isArray(body.non_field_errors)) {
+    for (const item of body.non_field_errors) {
+      messages.push(String(item));
+    }
+  }
+  return messages.length > 0 ? messages.join(" ") : null;
+}
+
+function errorMessageFromBody(body: unknown, statusText: string): string {
+  if (typeof body === "object" && body !== null) {
+    const record = body as Record<string, unknown>;
+    if ("detail" in record) {
+      const detail = record.detail;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) return detail.map(String).join(" ");
+    }
+    const fieldErrors = formatFieldErrors(record);
+    if (fieldErrors) return fieldErrors;
+  }
+  if (typeof body === "string" && body.trim()) return body;
+  return statusText || "Request failed";
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit & { token?: string | null } = {},
@@ -41,11 +76,11 @@ export async function apiFetch<T>(
   }
 
   if (!response.ok) {
-    const detail =
-      typeof body === "object" && body !== null && "detail" in body
-        ? String((body as { detail: unknown }).detail)
-        : response.statusText;
-    throw new ApiError(detail || "Request failed", response.status, body);
+    throw new ApiError(
+      errorMessageFromBody(body, response.statusText),
+      response.status,
+      body,
+    );
   }
 
   return body as T;

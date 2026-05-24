@@ -21,7 +21,8 @@ This repository implements **Phase 1 — Foundation**: a Django REST API on **Po
 | Auth API: login, refresh, `/me`                                                            | Yes                          |
 | Org/project/membership REST APIs (`/api/orgs/…`) with RBAC                                 | Yes                          |
 | Permission helpers (`IsOrganizationMember`, `HasOrganizationRole`, org-scoped mixins)      | Yes (enforced on org routes) |
-| React frontend (Vite): login, logout, org/project dashboard shell                            | Yes                          |
+| React frontend (Vite): login, org/project dashboard, members, builds, webhook setup       | Yes                          |
+| Builds list API (`GET …/projects/{id}/builds/`, last 50 events)                             | Yes                          |
 | Per-project `webhook_secret` (admins see on project detail API)                            | Yes                          |
 | Webhook HTTP endpoint: HMAC/token verify, dedup, 202 + Celery enqueue                      | Yes                          |
 | Celery worker + Redis broker (local or Docker Compose)                                       | Yes                          |
@@ -77,7 +78,7 @@ Tests and packaging assume you run commands from `**backend/**` unless noted oth
 ## Prerequisites
 
 - **Python 3.12+**
-- **Docker** and **Docker Compose** (for PostgreSQL locally)
+- **Docker** and **Docker Compose** (for PostgreSQL and Redis locally), **or** native installs — see **[README-WINDOWS.md](README-WINDOWS.md)** for Windows without Docker
 - A virtual environment (`python -m venv .venv`) is recommended
 
 ---
@@ -175,7 +176,31 @@ npm run dev
 
 Open **[http://localhost:5173](http://localhost:5173)**. Vite proxies `/api` to Django (`frontend/vite.config.ts`). CORS allows `http://localhost:5173` in local settings.
 
+Copy `frontend/.env.example` to `frontend/.env` if you need to override API or webhook base URLs (defaults: same origin via proxy).
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `VITE_API_BASE_URL` | *(empty)* | Django API origin; empty uses same origin (Vite dev proxy in local dev) |
+| `VITE_WEBHOOK_BASE_URL` | *(empty)* | Base URL shown in webhook setup copy buttons; empty uses same origin |
+
 Sign in with a demo user (after `load_demo_seed`), e.g. `alice@acme.dev` / `demo-password123`. Log out blacklists the refresh token via `POST /api/auth/token/blacklist/`.
+
+**Dashboard (after seed)**
+
+- Organization switcher, metadata, and **Your role** badge (`admin` / `member` / `viewer`)
+- **Members** table; admins can add members, change roles, or remove members
+- **Projects** table with row selection; admins can create or delete projects
+- **Project detail** panel: overview, webhook URLs (GitHub/GitLab) + secret copy (admins only), and **Recent builds** (last 50 from the API)
+- **New organization** when you have none, or via the header button (any authenticated user becomes admin)
+- Select a project (e.g. `web-api` in org `acme`) to load builds from seed data; use **Refresh** after `simulate_webhook`
+
+**Manual smoke checklist**
+
+1. Login as `alice@acme.dev` → see org `acme`, projects, members, role badge **Admin**
+2. Select `web-api` → builds from seed appear; webhook secret visible under **Webhook setup**
+3. Login as a viewer-only user → no admin actions; no webhook secret
+4. Admin creates a project → table updates
+5. `python manage.py simulate_webhook --org-slug acme --project-slug web-api` → **Refresh** on project panel shows new build
 
 ---
 
@@ -192,6 +217,8 @@ Sign in with a demo user (after `load_demo_seed`), e.g. `alice@acme.dev` / `demo
 | `REDIS_URL`            | Optional                    | Default `redis://localhost:6379/0`                                 |
 | `CELERY_BROKER_URL`    | Optional                    | Defaults to `REDIS_URL`                                          |
 | `WEBHOOK_BASE_URL`     | Optional                    | Base URL for webhook docs/simulator (default `http://127.0.0.1:8000`) |
+| `VITE_API_BASE_URL`    | Optional (frontend)         | React API origin; empty = same origin (Vite proxy in dev)             |
+| `VITE_WEBHOOK_BASE_URL`| Optional (frontend)         | Webhook URLs in dashboard copy UI; empty = same origin                |
 
 
 **Tests** use `config.settings.test` (SQLite in-memory, fast password hasher). When `DJANGO_SETTINGS_MODULE` ends with `.test`, `DATABASE_URL` and `DJANGO_SECRET_KEY` are not required—see `backend/config/settings/base.py` and `backend/config/settings/test.py`.
@@ -343,6 +370,16 @@ Authorization: Bearer <access-token>
 
 `slug` must be unique within the organization. Responses include `organization_id` (read-only).
 
+### Builds (org-scoped, per project)
+
+
+| Method | Path                                                  | Minimum role |
+| ------ | ----------------------------------------------------- | ------------ |
+| `GET`  | `/api/orgs/{org_id}/projects/{project_id}/builds/`    | `viewer`     |
+
+
+Returns up to **50** most recent `BuildEvent` rows for the project, ordered by `created_at` descending. Fields: `id`, `status`, `branch`, `commit_sha`, `duration`, `created_at` (no `raw_payload`).
+
 ### Memberships (org-scoped)
 
 
@@ -392,7 +429,7 @@ Users can belong to **multiple** organizations via separate membership rows.
 
 ### Ingestion models
 
-Defined in `backend/apps/ingestion/models.py` (FK to `**Project**` only; no public list API yet):
+Defined in `backend/apps/ingestion/models.py` (FK to `**Project**`; list API at `GET /api/orgs/{org_id}/projects/{project_id}/builds/`):
 
 - `**WebhookDelivery**` — one row per provider delivery ID for deduplication before async processing. Unique on `(provider, delivery_id)` where `provider` is `github` or `gitlab`. `received_at` is set on insert.
 - `**BuildEvent**` — normalized build/run parsed from a webhook payload: `status`, `branch`, `commit_sha`, optional `duration` (seconds), `raw_payload` (JSON), `created_at`. Indexes on `(project, created_at)` and `(status, branch)`.
