@@ -28,7 +28,7 @@ class Organization(models.Model):
     """
     Top-level tenant. Users belong via OrganizationMembership.
 
-    Roles (enforced at API layer in later milestones):
+    Roles (enforced on org-scoped REST routes via HasOrganizationRole):
 
     - admin: manage members, projects, alert rules.
     - member: view builds, configure personal notifications.

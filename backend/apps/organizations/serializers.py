@@ -101,24 +101,41 @@ class MembershipSerializer(serializers.ModelSerializer):
 
 
 class MembershipCreateSerializer(serializers.ModelSerializer):
-    user_id = serializers.UUIDField(write_only=True)
+    user_id = serializers.UUIDField(write_only=True, required=False)
+    email = serializers.EmailField(write_only=True, required=False)
 
     class Meta:
         model = OrganizationMembership
-        fields = ("id", "user_id", "role", "created_at")
+        fields = ("id", "user_id", "email", "role", "created_at")
         read_only_fields = ("id", "created_at")
 
-    def validate_user_id(self, value):
-        if not User.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("User not found.")
-        return value
-
     def validate(self, attrs):
+        user_id = attrs.get("user_id")
+        email = attrs.get("email")
+
+        if user_id is None and email is None:
+            raise serializers.ValidationError(
+                "Provide either user_id or email to add a member."
+            )
+        if user_id is not None and email is not None:
+            raise serializers.ValidationError(
+                "Provide user_id or email, not both."
+            )
+
+        if email is not None:
+            try:
+                user = User.objects.get(email__iexact=email.strip())
+            except User.DoesNotExist:
+                raise serializers.ValidationError({"email": "User not found."}) from None
+            attrs["user_id"] = user.pk
+            attrs.pop("email", None)
+        elif not User.objects.filter(pk=user_id).exists():
+            raise serializers.ValidationError({"user_id": "User not found."})
+
         org_id = self.context["org_id"]
-        user_id = attrs["user_id"]
         if OrganizationMembership.objects.filter(
             organization_id=org_id,
-            user_id=user_id,
+            user_id=attrs["user_id"],
         ).exists():
             raise serializers.ValidationError(
                 {"user_id": "User is already a member of this organization."}

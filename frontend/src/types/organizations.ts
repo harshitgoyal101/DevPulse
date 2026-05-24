@@ -54,7 +54,8 @@ export interface UpdateProjectPayload {
 }
 
 export interface CreateMembershipPayload {
-  user_id: string;
+  user_id?: string;
+  email?: string;
   role: Role;
 }
 

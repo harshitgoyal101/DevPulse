@@ -4,6 +4,7 @@ import * as orgApi from "../api/organizations";
 import { AddMemberForm } from "../components/AddMemberForm";
 import { CreateOrganizationForm } from "../components/CreateOrganizationForm";
 import { CreateProjectForm } from "../components/CreateProjectForm";
+import { EditOrganizationForm } from "../components/EditOrganizationForm";
 import { MembersTable } from "../components/MembersTable";
 import { ProjectDetailPanel } from "../components/ProjectDetailPanel";
 import { ProjectsTable } from "../components/ProjectsTable";
@@ -52,6 +53,7 @@ export function HomePage() {
   const [loadingProject, setLoadingProject] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
+  const [showEditOrg, setShowEditOrg] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
 
@@ -187,11 +189,33 @@ export function HomePage() {
     await loadOrgDetail();
   };
 
-  const handleAddMember = async (payload: { user_id: string; role: Role }) => {
+  const handleAddMember = async (payload: { email: string; role: Role }) => {
     if (!accessToken || !selectedOrgId) return;
     await orgApi.createMembership(accessToken, selectedOrgId, payload);
     setShowAddMember(false);
     await Promise.all([loadMembers(), refetchMembership()]);
+  };
+
+  const handleUpdateOrg = async (payload: { name: string; slug: string }) => {
+    if (!accessToken || !selectedOrgId) return;
+    await orgApi.updateOrganization(accessToken, selectedOrgId, payload);
+    setShowEditOrg(false);
+    await Promise.all([loadOrganizations(), loadOrgDetail()]);
+  };
+
+  const handleDeleteOrg = async () => {
+    if (!accessToken || !selectedOrgId || !orgDetail) return;
+    const confirmed = window.confirm(
+      `Delete organization "${orgDetail.name}"? This removes all projects, memberships, and build data.`,
+    );
+    if (!confirmed) return;
+    const deletedId = selectedOrgId;
+    await orgApi.deleteOrganization(accessToken, deletedId);
+    setShowEditOrg(false);
+    setSelectedOrgId(null);
+    setSelectedProjectId(null);
+    setOrgDetail(null);
+    await loadOrganizations();
   };
 
   const handleUpdateMemberRole = async (membershipId: string, memberRole: Role) => {
@@ -283,6 +307,7 @@ export function HomePage() {
                     onChange={(e) => {
                       setSelectedOrgId(e.target.value || null);
                       setSelectedProjectId(null);
+                      setShowEditOrg(false);
                     }}
                     disabled={loadingOrgs}
                   >
@@ -294,13 +319,24 @@ export function HomePage() {
                   </select>
                 </label>
               )}
-              <button
-                type="button"
-                className="btn-secondary text-sm"
-                onClick={() => setShowCreateOrg((v) => !v)}
-              >
-                {showCreateOrg ? "Cancel" : "New organization"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {isAdmin && orgDetail && (
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    onClick={() => setShowEditOrg((v) => !v)}
+                  >
+                    {showEditOrg ? "Cancel" : "Organization settings"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn-secondary text-sm"
+                  onClick={() => setShowCreateOrg((v) => !v)}
+                >
+                  {showCreateOrg ? "Cancel" : "New organization"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -311,6 +347,31 @@ export function HomePage() {
                 onCancel={() => setShowCreateOrg(false)}
                 compact
               />
+            </div>
+          )}
+
+          {showEditOrg && isAdmin && orgDetail && (
+            <div className="mt-6 rounded-xl border border-violet-100 bg-brand-50/30 p-4">
+              <h3 className="mb-4 text-sm font-semibold text-brand-900">Organization settings</h3>
+              <EditOrganizationForm
+                key={orgDetail.id}
+                initialName={orgDetail.name}
+                initialSlug={orgDetail.slug}
+                onSubmit={handleUpdateOrg}
+                onCancel={() => setShowEditOrg(false)}
+              />
+              <div className="mt-6 border-t border-violet-100 pt-4">
+                <p className="text-sm text-slate-600">
+                  Permanently delete this organization and all related data.
+                </p>
+                <button
+                  type="button"
+                  className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+                  onClick={() => void handleDeleteOrg()}
+                >
+                  Delete organization
+                </button>
+              </div>
             </div>
           )}
 

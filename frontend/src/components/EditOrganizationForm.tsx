@@ -1,15 +1,21 @@
 import { useState, type FormEvent } from "react";
 import { authErrorMessage } from "../context/AuthContext";
-import type { Role } from "../types/organizations";
 
-interface AddMemberFormProps {
-  onSubmit: (payload: { email: string; role: Role }) => Promise<void>;
+interface EditOrganizationFormProps {
+  initialName: string;
+  initialSlug: string;
+  onSubmit: (payload: { name: string; slug: string }) => Promise<void>;
   onCancel?: () => void;
 }
 
-export function AddMemberForm({ onSubmit, onCancel }: AddMemberFormProps) {
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("member");
+export function EditOrganizationForm({
+  initialName,
+  initialSlug,
+  onSubmit,
+  onCancel,
+}: EditOrganizationFormProps) {
+  const [name, setName] = useState(initialName);
+  const [slug, setSlug] = useState(initialSlug);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,9 +24,7 @@ export function AddMemberForm({ onSubmit, onCancel }: AddMemberFormProps) {
     setSubmitting(true);
     setError(null);
     try {
-      await onSubmit({ email: email.trim(), role });
-      setEmail("");
-      setRole("member");
+      await onSubmit({ name: name.trim(), slug: slug.trim() });
     } catch (err) {
       setError(authErrorMessage(err));
     } finally {
@@ -36,37 +40,34 @@ export function AddMemberForm({ onSubmit, onCancel }: AddMemberFormProps) {
         </p>
       )}
       <div>
-        <label htmlFor="member-email" className="label-text">
-          Email
+        <label htmlFor="edit-org-name" className="label-text">
+          Name
         </label>
         <input
-          id="member-email"
-          type="email"
+          id="edit-org-name"
           className="input-field mt-1"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="colleague@example.com"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
           required
         />
       </div>
       <div>
-        <label htmlFor="member-role" className="label-text">
-          Role
+        <label htmlFor="edit-org-slug" className="label-text">
+          Slug
         </label>
-        <select
-          id="member-role"
+        <input
+          id="edit-org-slug"
           className="input-field mt-1"
-          value={role}
-          onChange={(event) => setRole(event.target.value as Role)}
-        >
-          <option value="viewer">Viewer</option>
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
-        </select>
+          value={slug}
+          onChange={(event) => setSlug(event.target.value)}
+          pattern="[a-z0-9-]+"
+          title="Lowercase letters, numbers, and hyphens only"
+          required
+        />
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="submit" className="btn-primary max-w-none px-4 py-2" disabled={submitting}>
-          {submitting ? "Adding…" : "Add member"}
+          {submitting ? "Saving…" : "Save changes"}
         </button>
         {onCancel && (
           <button type="button" className="btn-secondary" onClick={onCancel}>

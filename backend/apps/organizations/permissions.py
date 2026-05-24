@@ -1,4 +1,4 @@
-"""RBAC helpers for API views (enforce on org-scoped routes in later milestones)."""
+"""RBAC helpers for org-scoped API views."""
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db.models import QuerySet

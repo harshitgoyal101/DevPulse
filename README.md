@@ -457,7 +457,7 @@ Use the admin to manage:
 
 - Users (email-based)
 - Organizations, projects, and memberships
-- Webhook deliveries and build events (debugging ingestion; seed via admin or tests until the webhook API exists)
+- Webhook deliveries and build events (debugging ingestion; seed via admin, `load_demo_seed`, or `POST /api/webhooks/{provider}/{project_id}/`)
 
 Use the admin or the [Organizations API](#organizations-api) to seed orgs, projects, and memberships.
 
@@ -483,7 +483,6 @@ ruff check apps config manage.py tests
 
 - Django Channels + Redis pub/sub + live build timeline (WebSocket)
 - CI API polling via Celery Beat
-- Build list REST API for dashboard
 - Notifications (Email, Slack, in-app), analytics, Prometheus, OpenAPI docs
 
 ---

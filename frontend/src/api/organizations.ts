@@ -44,6 +44,13 @@ export function updateOrganization(
   });
 }
 
+export function deleteOrganization(token: string, orgId: string): Promise<void> {
+  return apiFetch<void>(`/api/orgs/${orgId}/`, {
+    token,
+    method: "DELETE",
+  });
+}
+
 export function getProject(
   token: string,
   orgId: string,

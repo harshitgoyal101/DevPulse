@@ -206,6 +206,62 @@ class TestMembershipAPI:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) == 3
 
+    def test_add_member_by_email_requires_admin(self, auth_client, org_with_roles):
+        data = org_with_roles()
+        new_user = UserFactory(email="new@example.com")
+        url = membership_list_url(data["org"].id)
+        payload = {"email": new_user.email, "role": Role.MEMBER}
+
+        assert (
+            auth_client(data["member"]).post(url, payload, format="json").status_code
+            == status.HTTP_403_FORBIDDEN
+        )
+        response = auth_client(data["admin"]).post(url, payload, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert OrganizationMembership.objects.filter(
+            user=new_user,
+            organization=data["org"],
+        ).exists()
+
+    def test_add_member_by_email_case_insensitive(self, auth_client, org_with_roles):
+        data = org_with_roles()
+        new_user = UserFactory(email="Invitee@Example.com")
+        url = membership_list_url(data["org"].id)
+        payload = {"email": "invitee@example.com", "role": Role.VIEWER}
+        response = auth_client(data["admin"]).post(url, payload, format="json")
+        assert response.status_code == status.HTTP_201_CREATED
+        assert OrganizationMembership.objects.filter(
+            user=new_user,
+            organization=data["org"],
+            role=Role.VIEWER,
+        ).exists()
+
+    def test_add_member_unknown_email_rejected(self, auth_client, org_with_roles):
+        data = org_with_roles()
+        url = membership_list_url(data["org"].id)
+        payload = {"email": "missing@example.com", "role": Role.MEMBER}
+        response = auth_client(data["admin"]).post(url, payload, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "email" in response.data
+
+    def test_add_member_requires_user_id_or_email(self, auth_client, org_with_roles):
+        data = org_with_roles()
+        url = membership_list_url(data["org"].id)
+        response = auth_client(data["admin"]).post(url, {"role": Role.MEMBER}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_add_member_rejects_user_id_and_email(self, auth_client, org_with_roles):
+        data = org_with_roles()
+        new_user = UserFactory(email="both@example.com")
+        url = membership_list_url(data["org"].id)
+        payload = {
+            "user_id": str(new_user.id),
+            "email": new_user.email,
+            "role": Role.MEMBER,
+        }
+        response = auth_client(data["admin"]).post(url, payload, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_add_member_requires_admin(self, auth_client, org_with_roles):
         data = org_with_roles()
         new_user = UserFactory(email="new@example.com")
